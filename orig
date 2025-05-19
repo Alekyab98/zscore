@@ -1,0 +1,69 @@
+WITH aggregated_data AS (
+    SELECT
+        CASE WHEN metric_name = 'active_sessions_p90' THEN 'active_sessions'
+          WHEN metric_name = 'total_subscribers_p90' THEN 'total_subscribers' END AS metric_name,
+        trans_dt,
+        site_name,
+        event_time,
+        local_event_time,
+        vendor,
+        fqdn,
+        group_key,
+        group_value,
+        fqdn_type,
+        primary_clli,
+        device_clli,
+        region,
+        area,
+        market,
+        latitude,
+        longitude,
+        value,
+        SUM(value) OVER (PARTITION BY metric_name, site_name, trans_dt, event_time) AS total_value
+    FROM
+`vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls_v.aether_smf_performance_derived_tbl`
+    WHERE trans_dt ='2024-10-10'
+         AND LOWER(metric_name) IN (lower('active_sessions_p90'))
+         and site_name='Farmingdale' 
+    AND LOWER(metric_name) IN (LOWER('active_sessions_p90'))
+        
+),
+ranked_smf_data AS (
+    SELECT
+        *,
+        RANK() OVER (
+            PARTITION BY metric_name, site_name, trans_dt
+            ORDER BY total_value DESC
+        ) AS rank
+    FROM
+        aggregated_data
+)
+SELECT 
+    '5g' AS technology,
+    'original_max'as data_version,
+    trans_dt,
+    event_time,
+    local_event_time,
+    vendor,
+    fqdn AS device_name,
+    'smf' AS function_name,
+    metric_name,
+    value AS metric_value,
+    'count' as metric_unit,
+    group_key,
+    group_value,
+    fqdn_type AS device_type,
+    primary_clli,
+    device_clli,
+    region,
+    site_name,
+    area,
+    market,
+    latitude,
+    longitude,
+FROM
+    ranked_smf_data 
+WHERE
+    rank = 1 and trans_dt = '2024-10-10'
+ Qualify row_number() OVER (PARTITION BY trans_dt, metric_name, site_name, fqdn, group_value order by total_value desc)=1
+
