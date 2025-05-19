@@ -111,4 +111,3 @@ SELECT
     latitude,
     longitude
 FROM final_selection
-
