@@ -1,4 +1,5 @@
 WITH aggregated_data AS (
+
     SELECT
         CASE WHEN metric_name = 'active_sessions_p90' THEN 'active_sessions'
           WHEN metric_name = 'total_subscribers_p90' THEN 'total_subscribers' END AS metric_name,
