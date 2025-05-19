@@ -1,0 +1,107 @@
+WITH aggregated_data AS (
+  SELECT
+    CASE 
+      WHEN metric_name = 'active_sessions_p90' THEN 'active_sessions'
+      WHEN metric_name = 'total_subscribers_p90' THEN 'total_subscribers'
+    END AS metric_name,
+    trans_dt,
+    site_name,
+    event_time,
+    local_event_time,
+    vendor,
+    fqdn,
+    group_key,
+    group_value,
+    fqdn_type,
+    primary_clli,
+    device_clli,
+    region,
+    area,
+    market,
+    latitude,
+    longitude,
+    value,
+    SUM(value) OVER (
+      PARTITION BY metric_name, site_name, trans_dt, event_time
+    ) AS total_value
+  FROM `vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls_v.aether_smf_performance_derived_tbl`
+  WHERE trans_dt BETWEEN DATE('2024-10-01') AND DATE('2024-10-10')
+    AND LOWER(metric_name) IN (LOWER('active_sessions_p90'), LOWER('total_subscribers_p90'))
+),
+
+stats_per_day AS (
+  SELECT
+    metric_name,
+    site_name,
+    trans_dt,
+    AVG(total_value) AS avg_value,
+    STDDEV_POP(total_value) AS stddev_value
+  FROM aggregated_data
+  GROUP BY metric_name, site_name, trans_dt
+),
+
+ranked_data_with_zscore AS (
+  SELECT
+    a.*,
+    s.avg_value,
+    s.stddev_value,
+    SAFE_DIVIDE(total_value - s.avg_value, s.stddev_value) AS z_score,
+    DENSE_RANK() OVER (
+      PARTITION BY a.metric_name, a.site_name, a.trans_dt
+      ORDER BY total_value DESC
+    ) AS rank,
+    CASE 
+      WHEN SAFE_DIVIDE(total_value - s.avg_value, s.stddev_value) > 2.25 THEN 1 
+      ELSE 0 
+    END AS its_outlier
+  FROM aggregated_data a
+  JOIN stats_per_day s
+    ON a.metric_name = s.metric_name
+    AND a.site_name = s.site_name
+    AND a.trans_dt = s.trans_dt
+),
+
+-- Find the next best rank for each site that is not an outlier
+next_best_value AS (
+  SELECT
+    metric_name,
+    site_name,
+    trans_dt,
+    MIN(rank) AS next_rank
+  FROM ranked_data_with_zscore
+  WHERE its_outlier = 0
+  GROUP BY metric_name, site_name, trans_dt
+),
+
+-- Final selection with actual values, not the aggregated total_value
+final_selection AS (
+  SELECT 
+    r.*
+  FROM ranked_data_with_zscore r
+  JOIN next_best_value n
+    ON r.metric_name = n.metric_name
+    AND r.site_name = n.site_name
+    AND r.trans_dt = n.trans_dt
+    AND r.rank = n.next_rank
+)
+
+SELECT 
+    metric_name,
+    trans_dt,
+    site_name,
+    event_time,
+    local_event_time,
+    vendor,
+    fqdn,
+    group_key,
+    group_value,
+    fqdn_type,
+    primary_clli,
+    device_clli,
+    region,
+    area,
+    market,
+    latitude,
+    longitude,
+    value -- This is the actual value, not the total
+FROM final_selection
